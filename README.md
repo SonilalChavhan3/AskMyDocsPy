@@ -33,7 +33,7 @@ AskMyDocsPy is a simple PDF Q&A application built with Python, LangChain, and Gr
 2. Install dependencies:
 
 ```bash
-pip install langchain langchain-openai langchain-chroma langchain-huggingface langchain-community pypdf sentence-transformers gradio python-dotenv
+pip install langchain langchain-openai langchain-chroma langchain-huggingface pypdf sentence-transformers gradio python-dotenv
 ```
 
 3. Create a `.env` file in the project root and add your API key:
@@ -64,5 +64,6 @@ The app:
 ## Notes
 
 - The app expects a valid `GROQ_API_KEY` to be present in the `.env` file.
+- PDFs must contain selectable text. Scanned/image-only PDFs need OCR before upload.
 - The project is intended for local experimentation and lightweight document Q&A use cases.
 - The Gradio app uses a public share link by default (`share=True`), so be careful when using it in a shared or production environment.

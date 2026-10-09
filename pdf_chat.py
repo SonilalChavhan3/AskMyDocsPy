@@ -1,9 +1,12 @@
 # pip install langchain langchain-openai langchain-chroma langchain-huggingface \
-#             langchain-community pypdf sentence-transformers gradio python-dotenv
+#             pypdf sentence-transformers gradio python-dotenv
 
 import os
+from uuid import uuid4
+from io import BytesIO
 
-from langchain_community.document_loaders import PyPDFLoader
+from pypdf import PdfReader
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
@@ -24,10 +27,23 @@ model    = ChatOpenAI(
     temperature=0,
 )
 
-def build_index(pdf_path):
-    pages    = PyPDFLoader(pdf_path).load()                    # ① read all pages
+def build_index(pdf_bytes):
+    reader = PdfReader(BytesIO(pdf_bytes))
+    pages = [
+        Document(page_content=page.extract_text() or "", metadata={"page": page_number})
+        for page_number, page in enumerate(reader.pages)
+    ]
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
-    chunks   = splitter.split_documents(pages)                # ② chunk them
+    chunks   = [
+        chunk
+        for chunk in splitter.split_documents(pages)
+        if chunk.page_content.strip()
+    ]
+    if not chunks:
+        raise ValueError(
+            "No extractable text was found in this PDF. "
+            "If it contains scanned pages, run OCR on it and upload it again."
+        )
     embedder = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     db       = Chroma.from_documents(chunks, embedder)         # ③ in-memory store
     return db
@@ -53,22 +69,34 @@ def ask(db, question):
     return chain.invoke({"context": context, "question": question}).content
 
 
-state = {"db": None}                    # ① remember the index across turns
+indexes = {}
 
-def upload(pdf):
-    state["db"] = build_index(pdf.name)   # ② re-index whenever a new PDF arrives
-    return "✅ PDF indexed! Ask me anything about it."
+def upload(pdf_bytes, index_id):
+    if not pdf_bytes:
+        if index_id:
+            indexes.pop(index_id, None)
+        return "Please upload a PDF first 📄", None
+    if index_id:
+        indexes.pop(index_id, None)
+    try:
+        index = build_index(pdf_bytes)
+    except ValueError as error:
+        return f"Could not index this PDF: {error}", None
+    index_id = str(uuid4())
+    indexes[index_id] = index
+    return "✅ PDF indexed! Ask me anything about it.", index_id
 
-def chat(message, history):
-    if state["db"] is None:
+def chat(message, history, index_id):
+    if not index_id or index_id not in indexes:
         return "Please upload a PDF first 📄"
-    return ask(state["db"], message)
+    return ask(indexes[index_id], message)
 
 with gr.Blocks(title="📄 Chat with your PDF") as demo:
     gr.Markdown("## 📄 Chat with your PDF (powered by RAG)")
-    pdf    = gr.File(label="Upload a PDF", file_types=[".pdf"])
+    pdf    = gr.File(label="Upload a PDF", file_types=[".pdf"], type="binary")
     status = gr.Markdown()
-    pdf.upload(upload, inputs=pdf, outputs=status)
-    gr.ChatInterface(fn=chat)
+    index_state = gr.State(value=None)
+    pdf.upload(upload, inputs=[pdf, index_state], outputs=[status, index_state])
+    gr.ChatInterface(fn=chat, additional_inputs=[index_state])
 
 demo.launch(share=True)                   # share=True → public link!
